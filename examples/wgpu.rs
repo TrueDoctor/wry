@@ -1,7 +1,8 @@
 use std::borrow::Cow;
 use winit::{
   event::{Event, WindowEvent},
-  event_loop::{ControlFlow, EventLoop},
+  event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
+  platform::x11::EventLoopBuilderExtX11,
   window::Window,
 };
 use wry::dpi::{LogicalPosition, LogicalSize};
@@ -213,7 +214,7 @@ fn main() {
     }));
   }
 
-  let event_loop = EventLoop::new().unwrap();
+  let event_loop = EventLoopBuilder::new().with_x11().build().unwrap();
   let window = winit::window::WindowBuilder::new()
     .with_transparent(true)
     .build(&event_loop)
