@@ -240,7 +240,7 @@ use self::webview2::*;
 #[cfg(target_os = "windows")]
 use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller;
 
-use std::{borrow::Cow, path::PathBuf, rc::Rc};
+use std::{borrow::Cow, io::Read, path::PathBuf, rc::Rc};
 
 use http::{Request, Response};
 
@@ -572,6 +572,19 @@ impl<'a> WebViewBuilder<'a> {
     Self {
       attrs: WebViewAttributes::default(),
       window: Some(window),
+      as_child: false,
+      #[allow(clippy::default_constructed_unit_structs)]
+      platform_specific: PlatformSpecificWebViewAttributes::default(),
+      web_context: None,
+      #[cfg(gtk)]
+      gtk_widget: None,
+    }
+  }
+
+  pub fn new_offscreen() -> Self {
+    Self {
+      attrs: WebViewAttributes::default(),
+      window: None,
       as_child: false,
       #[allow(clippy::default_constructed_unit_structs)]
       platform_specific: PlatformSpecificWebViewAttributes::default(),
@@ -1021,7 +1034,7 @@ impl<'a> WebViewBuilder<'a> {
       if let Some(widget) = self.gtk_widget {
         InnerWebView::new_gtk(widget, self.attrs, self.platform_specific, self.web_context)?
       } else {
-        unreachable!()
+        InnerWebView::new_offscreen(self.attrs, self.platform_specific, self.web_context)?
       }
 
       #[cfg(not(gtk))]
@@ -1289,6 +1302,10 @@ impl WebView {
     WebViewBuilder::new_as_child(parent).build()
   }
 
+  pub fn new_offscreen() -> Result<Self> {
+    WebViewBuilder::new_offscreen().build()
+  }
+
   /// Get the current url of the webview
   pub fn url(&self) -> Result<String> {
     self.webview.url()
@@ -1410,6 +1427,14 @@ impl WebView {
   /// Try moving focus to the webview.
   pub fn focus(&self) -> Result<()> {
     self.webview.focus()
+  }
+
+  pub fn offscreen_data(&self) -> Result<Box<[u8]>> {
+    self
+      .webview
+      .offscreen_data()
+      .ok_or(Error::MessageSender)
+      .map(|x| Box::<[u8]>::from(x.read_pixel_bytes().to_vec()))
   }
 }
 

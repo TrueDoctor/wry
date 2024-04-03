@@ -2,66 +2,50 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
+use dpi::{LogicalPosition, LogicalSize};
 use tao::{
   event::{Event, WindowEvent},
   event_loop::{ControlFlow, EventLoop},
   window::WindowBuilder,
 };
-use wry::WebViewBuilder;
+use wry::{Rect, WebViewBuilder};
 
-fn main() -> wry::Result<()> {
-  let event_loop = EventLoop::new();
-  let window = WindowBuilder::new().build(&event_loop).unwrap();
+fn main() -> Result<(), ()> {
+  use tao::platform::unix::WindowExtUnix;
+  use wry::WebViewBuilderExtUnix;
 
-  #[cfg(any(
-    target_os = "windows",
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "android"
-  ))]
-  let builder = WebViewBuilder::new(&window);
+  gtk::init().unwrap();
 
-  #[cfg(not(any(
-    target_os = "windows",
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "android"
-  )))]
-  let builder = {
-    use tao::platform::unix::WindowExtUnix;
-    use wry::WebViewBuilderExtUnix;
-    let vbox = window.default_vbox().unwrap();
-    WebViewBuilder::new_gtk(vbox)
-  };
+  // we need to ignore this error here otherwise it will be catched by winit and will be
+  // make the example crash
+  let builder = WebViewBuilder::new_offscreen();
 
-  let _webview = builder
-    .with_url("http://tauri.app")
-    .with_drag_drop_handler(|e| {
-      match e {
-        wry::DragDropEvent::Enter { paths, position } => {
-          println!("DragEnter: {position:?} {paths:?} ")
-        }
-        wry::DragDropEvent::Over { position } => println!("DragOver: {position:?} "),
-        wry::DragDropEvent::Drop { paths, position } => {
-          println!("DragDrop: {position:?} {paths:?} ")
-        }
-        wry::DragDropEvent::Leave => println!("DragLeave"),
-        _ => {}
-      }
-
-      true
+  let webview = builder
+    .with_bounds(Rect {
+      position: LogicalPosition::new(0, 0).into(),
+      size: LogicalSize::new(20, 20).into(),
     })
-    .build()?;
+    .with_transparent(true)
+    .with_html(
+      r#"<html>
+          <body style="background-color:rgba(0,255,0,0.9);"></body>
+        </html>"#,
+    )
+    // .with_url("http://tauri.app")
+    .build()
+    .unwrap();
 
-  event_loop.run(move |event, _, control_flow| {
-    *control_flow = ControlFlow::Wait;
-
-    if let Event::WindowEvent {
-      event: WindowEvent::CloseRequested,
-      ..
-    } = event
-    {
-      *control_flow = ControlFlow::Exit
+  let mut last = 0;
+  loop {
+    if let Ok(x) = webview.offscreen_data() {
+      if x[0] != last {
+        last = dbg!(x[0]);
+        // if last == 217 {
+        dbg!(x.len());
+        println!("{x:?}");
+        // }
+      }
     }
-  });
+    gtk::main_iteration_do(false);
+  }
 }
