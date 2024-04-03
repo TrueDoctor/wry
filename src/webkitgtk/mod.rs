@@ -8,10 +8,12 @@ use gdkx11::{
   X11Display,
 };
 use gtk::{
-  gdk::{self},
+  gdk,
+  gdk_pixbuf::Pixbuf,
   gio::Cancellable,
   glib::{self, translate::FromGlibPtrFull},
   prelude::*,
+  OffscreenWindow,
 };
 use http::Request;
 use javascriptcore::ValueExt;
@@ -74,6 +76,7 @@ pub(crate) struct InnerWebView {
   is_in_fixed_parent: bool,
 
   x11: Option<X11Data>,
+  offscreen_window: Option<OffscreenWindow>,
 }
 
 impl Drop for InnerWebView {
@@ -205,6 +208,26 @@ impl InnerWebView {
     (window, vbox)
   }
 
+  pub fn new_offscreen(
+    attributes: WebViewAttributes,
+    _pl_attrs: super::PlatformSpecificWebViewAttributes,
+    web_context: Option<&mut WebContext>,
+  ) -> Result<Self> {
+    let bounds = attributes
+      .bounds
+      .map(|x| x.size.to_physical(1.))
+      .map(|x| (x.width, x.height))
+      .unwrap_or((200, 200));
+    let window = gtk::OffscreenWindow::builder()
+      .default_width(bounds.0)
+      .default_height(bounds.1)
+      .build();
+
+    let mut webview = Self::new_gtk(&window, attributes, _pl_attrs, web_context)?;
+    webview.offscreen_window = Some(window);
+    Ok(webview)
+  }
+
   pub fn new_gtk<W>(
     container: &W,
     mut attributes: WebViewAttributes,
@@ -286,6 +309,7 @@ impl InnerWebView {
 
       is_in_fixed_parent,
       x11: None,
+      offscreen_window: None,
 
       #[cfg(any(debug_assertions, feature = "devtools"))]
       is_inspector_open,
@@ -807,6 +831,14 @@ impl InnerWebView {
     }
 
     Ok(())
+  }
+
+  pub fn offscreen_data(&self) -> Option<Pixbuf> {
+    self.offscreen_window.as_ref().and_then(|o| {
+      o.queue_draw();
+      o.show_all();
+      o.pixbuf()
+    })
   }
 }
 
