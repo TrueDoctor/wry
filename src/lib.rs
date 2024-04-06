@@ -1038,7 +1038,8 @@ impl<'a> WebViewBuilder<'a> {
       }
 
       #[cfg(not(gtk))]
-      unreachable!()
+      InnerWebView::new_offscreen(self.attrs, self.platform_specific, self.web_context)?
+      // unreachable!()
     };
 
     Ok(WebView { webview })
@@ -1430,11 +1431,16 @@ impl WebView {
   }
 
   pub fn offscreen_data(&self) -> Result<Box<[u8]>> {
+    /*self
+    .webview
+    .offscreen_data()
+    .ok_or(Error::MessageSender)
+    .map(|x| Box::<[u8]>::from(x.read_pixel_bytes().to_vec()))*/
     self
       .webview
       .offscreen_data()
+      .map(|(w, data)| data)
       .ok_or(Error::MessageSender)
-      .map(|x| Box::<[u8]>::from(x.read_pixel_bytes().to_vec()))
   }
 }
 

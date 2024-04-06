@@ -15,7 +15,9 @@ use once_cell::sync::Lazy;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use webview2_com::{Microsoft::Web::WebView2::Win32::*, *};
 use windows::{
-  core::{s, w, Interface, HSTRING, PCWSTR, PWSTR},
+  core::{s, w, IUnknown, Interface, HSTRING, PCWSTR, PWSTR},
+  Foundation::Numerics::Vector2,
+  Graphics::Capture::GraphicsCaptureItem,
   Win32::{
     Foundation::*,
     Globalization::{self, MAX_LOCALE_NAME},
@@ -23,7 +25,10 @@ use windows::{
     System::{
       Com::{CoInitializeEx, IStream, COINIT_APARTMENTTHREADED},
       LibraryLoader::GetModuleHandleW,
-      WinRT::EventRegistrationToken,
+      WinRT::{
+        CreateDispatcherQueueController, DispatcherQueueOptions, EventRegistrationToken,
+        DISPATCHERQUEUE_THREAD_APARTMENTTYPE, DISPATCHERQUEUE_THREAD_TYPE,
+      },
     },
     UI::{
       Shell::{DefSubclassProc, RemoveWindowSubclass, SHCreateMemStream, SetWindowSubclass},
@@ -31,11 +36,13 @@ use windows::{
         self as win32wm, CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect,
         PostMessageW, RegisterClassExW, RegisterWindowMessageA, SendMessageW, SetParent,
         SetWindowPos, ShowWindow, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, HCURSOR, HICON, HMENU,
-        SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SW_HIDE, SW_SHOW,
-        WINDOW_EX_STYLE, WM_USER, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_VISIBLE,
+        HWND_MESSAGE, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SW_HIDE,
+        SW_SHOW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_USER, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN,
+        WS_VISIBLE,
       },
     },
   },
+  UI::Composition::{Compositor, ContainerVisual},
 };
 
 use self::drag_drop::DragDropController;
@@ -101,6 +108,64 @@ impl InnerWebView {
   }
 
   #[inline]
+  pub fn new_offscreen(
+    attributes: WebViewAttributes,
+    pl_attrs: super::PlatformSpecificWebViewAttributes,
+    web_context: Option<&mut WebContext>,
+  ) -> Result<Self> {
+    let bounds = attributes.bounds.map(|x| x.size.to_physical(1.));
+    let size = bounds.map(|x| (x.width, x.height)).unwrap_or((200, 200));
+    let class_name = w!("WRY_OFFSCREEN_WEBVIEW");
+
+    unsafe extern "system" fn default_window_proc(
+      hwnd: HWND,
+      msg: u32,
+      wparam: WPARAM,
+      lparam: LPARAM,
+    ) -> LRESULT {
+      DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
+
+    dbg!(size);
+    let class = WNDCLASSEXW {
+      cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+      style: CS_HREDRAW | CS_VREDRAW,
+      lpfnWndProc: Some(default_window_proc),
+      cbClsExtra: 0,
+      cbWndExtra: 0,
+      hInstance: unsafe { HINSTANCE(GetModuleHandleW(PCWSTR::null()).unwrap_or_default().0) },
+      hIcon: HICON::default(),
+      hCursor: HCURSOR::default(),
+      hbrBackground: HBRUSH::default(),
+      lpszMenuName: PCWSTR::null(),
+      lpszClassName: class_name,
+      hIconSm: HICON::default(),
+    };
+
+    dbg!(&class);
+    unsafe { RegisterClassExW(&class) };
+
+    let hwnd = unsafe {
+      CreateWindowExW(
+        WINDOW_EX_STYLE::default(),
+        class_name,
+        w!("offscreen window"),
+        WINDOW_STYLE::default(),
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        size.0,
+        size.1,
+        HWND_MESSAGE,
+        HMENU(0),
+        HINSTANCE(GetModuleHandleW(PCWSTR::null()).unwrap_or_default().0),
+        None,
+      )
+    };
+    dbg!(hwnd.0);
+    Self::new_in_hwnd(hwnd, attributes, pl_attrs, web_context, false)
+  }
+
+  #[inline]
   pub fn new_as_child(
     parent: &impl HasWindowHandle,
     attributes: WebViewAttributes,
@@ -131,6 +196,34 @@ impl InnerWebView {
 
     let env = Self::create_environment(&web_context, pl_attrs.clone(), &attributes)?;
     let controller = Self::create_controller(hwnd, &env, attributes.incognito)?;
+    let composition_controller =
+      Self::create_composition_controller(hwnd, &env, attributes.incognito)?;
+
+    let options = DispatcherQueueOptions {
+      threadType: DISPATCHERQUEUE_THREAD_TYPE(2),
+      apartmentType: DISPATCHERQUEUE_THREAD_APARTMENTTYPE::default(),
+      dwSize: std::mem::size_of::<DispatcherQueueOptions>() as u32,
+    };
+    let queue_controller = unsafe { CreateDispatcherQueueController(options) }?;
+
+    dbg!("creating compositior");
+    let m_compositor = Compositor::new()?;
+
+    dbg!("foo");
+    let mut m_root_visual = m_compositor.CreateContainerVisual()?;
+
+    m_root_visual.SetSize(Vector2 { X: 800., Y: 640. })?;
+    m_root_visual.SetIsVisible(true)?;
+
+    let mut m_web_view_visual = m_compositor.CreateContainerVisual()?;
+    m_root_visual.Children()?.InsertAtTop(&m_web_view_visual)?;
+    m_web_view_visual.SetRelativeSizeAdjustment(Vector2 { X: 1.0, Y: 1.0 })?;
+    unsafe {
+      composition_controller.SetRootVisualTarget(Some(&IUnknown::from(m_web_view_visual)))
+    }?;
+    unsafe { controller.SetIsVisible(true) };
+    let visual = GraphicsCaptureItem::CreateFromVisual(&m_root_visual);
+
     let webview = Self::init_webview(
       parent,
       hwnd,
@@ -153,6 +246,13 @@ impl InnerWebView {
       env,
       drag_drop_controller,
     })
+  }
+
+  #[inline]
+  pub fn offscreen_data(&self) -> Option<(u32, Box<[u8]>)> {
+    use win_screenshot::prelude::*;
+    let buf = capture_window(self.hwnd.0);
+    buf.ok().map(|b| (b.width, b.pixels.into()))
   }
 
   #[inline]
@@ -338,6 +438,34 @@ impl InnerWebView {
       Box::new(move |handler| unsafe {
         env
           .CreateCoreWebView2ControllerWithOptions(hwnd, &controller_opts, &handler)
+          .map_err(Into::into)
+      }),
+      Box::new(move |error_code, controller| {
+        error_code?;
+        tx.send(controller.ok_or_else(|| windows::core::Error::from(E_POINTER)))
+          .map_err(|_| windows::core::Error::from(E_UNEXPECTED))
+      }),
+    )?;
+
+    rx.recv()?.map_err(Into::into)
+  }
+
+  #[inline]
+  fn create_composition_controller(
+    hwnd: HWND,
+    env: &ICoreWebView2Environment,
+    incognito: bool,
+  ) -> Result<ICoreWebView2CompositionController> {
+    let (tx, rx) = mpsc::channel();
+    let env = env.clone().cast::<ICoreWebView2Environment10>()?;
+    let controller_opts = unsafe { env.CreateCoreWebView2ControllerOptions()? };
+
+    unsafe { controller_opts.SetIsInPrivateModeEnabled(incognito)? }
+
+    CreateCoreWebView2CompositionControllerCompletedHandler::wait_for_async_operation(
+      Box::new(move |handler| unsafe {
+        env
+          .CreateCoreWebView2CompositionControllerWithOptions(hwnd, &controller_opts, &handler)
           .map_err(Into::into)
       }),
       Box::new(move |error_code, controller| {
