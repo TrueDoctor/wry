@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
+use dpi::{LogicalPosition, LogicalSize};
 use tao::{
   event::{Event, WindowEvent},
   event_loop::{ControlFlow, EventLoop},
   window::WindowBuilder,
 };
-use wry::WebViewBuilder;
+use wry::{Rect, WebViewBuilder};
 
 fn main() -> wry::Result<()> {
   //let event_loop = EventLoop::new();
@@ -36,22 +37,16 @@ fn main() -> wry::Result<()> {
   };
 
   let webview = builder
-    .with_url("http://tauri.app")
-    .with_drag_drop_handler(|e| {
-      match e {
-        wry::DragDropEvent::Enter { paths, position } => {
-          println!("DragEnter: {position:?} {paths:?} ")
-        }
-        wry::DragDropEvent::Over { position } => println!("DragOver: {position:?} "),
-        wry::DragDropEvent::Drop { paths, position } => {
-          println!("DragDrop: {position:?} {paths:?} ")
-        }
-        wry::DragDropEvent::Leave => println!("DragLeave"),
-        _ => {}
-      }
-
-      true
+    .with_bounds(Rect {
+      position: LogicalPosition::new(0, 0).into(),
+      size: LogicalSize::new(40, 20).into(),
     })
+    .with_transparent(true)
+    .with_html(
+      r#"<html>
+        <body style="background-color:rgba(0,255,0,0.9);"></body>
+      </html>"#,
+    )
     .build()?;
 
   /*event_loop.run(move |event, _, control_flow| {
@@ -70,12 +65,12 @@ fn main() -> wry::Result<()> {
   //println!("data: {:?}", webview.offscreen_data());
   loop {
     if let Ok(x) = webview.offscreen_data() {
-      //dbg!("got_data", &x);
+      //dbg!("got_data", &x[0..4]);
       if x[0] != last {
         last = dbg!(x[0]);
         // if last == 217 {
         dbg!(x.len());
-        println!("{x:?}");
+        //println!("{x:?}");
         // }
       }
     }

@@ -2,11 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
+mod capture;
 mod drag_drop;
 mod util;
 
 use std::{
-  borrow::Cow, cell::RefCell, collections::HashSet, fmt::Write, path::PathBuf, rc::Rc, sync::mpsc,
+  borrow::Cow,
+  cell::{Cell, RefCell},
+  collections::HashSet,
+  fmt::Write,
+  path::PathBuf,
+  rc::Rc,
+  sync::{mpsc, Arc, Mutex},
 };
 
 use dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
@@ -44,8 +51,11 @@ use windows::{
   },
   UI::Composition::{Compositor, ContainerVisual},
 };
+use windows_capture::capture::GraphicsCaptureApiHandler;
 
-use self::drag_drop::DragDropController;
+static FRAME: Mutex<Option<OwnedFrame>> = Mutex::new(None);
+
+use self::{capture::OwnedFrame, drag_drop::DragDropController};
 use super::Theme;
 use crate::{
   proxy::ProxyConfig, Error, MemoryUsageLevel, PageLoadEvent, Rect, RequestAsyncResponder, Result,
@@ -192,6 +202,9 @@ impl InnerWebView {
 
     let (hwnd, size) = Self::create_container_hwnd(parent, &attributes, is_child)?;
 
+    let bounds = attributes.bounds.map(|x| x.size.to_physical(1.));
+    let target_size = bounds.map(|x| (x.width, x.height)).unwrap_or((200, 200));
+
     let drop_handler = attributes.drag_drop_handler.take();
 
     let env = Self::create_environment(&web_context, pl_attrs.clone(), &attributes)?;
@@ -212,7 +225,10 @@ impl InnerWebView {
     dbg!("foo");
     let mut m_root_visual = m_compositor.CreateContainerVisual()?;
 
-    m_root_visual.SetSize(Vector2 { X: 800., Y: 640. })?;
+    m_root_visual.SetSize(Vector2 {
+      X: target_size.0 as f32,
+      Y: target_size.1 as f32,
+    })?;
     m_root_visual.SetIsVisible(true)?;
 
     let mut m_web_view_visual = m_compositor.CreateContainerVisual()?;
@@ -222,7 +238,27 @@ impl InnerWebView {
       composition_controller.SetRootVisualTarget(Some(&IUnknown::from(m_web_view_visual)))
     }?;
     unsafe { controller.SetIsVisible(true) };
-    let visual = GraphicsCaptureItem::CreateFromVisual(&m_root_visual);
+    let capture_item = GraphicsCaptureItem::CreateFromVisual(&m_root_visual)?;
+
+    let settings = windows_capture::settings::Settings::new(
+      // Item To Captue
+      capture_item,
+      // Capture Cursor Settings
+      windows_capture::settings::CursorCaptureSettings::Default,
+      // Draw Borders Settings
+      windows_capture::settings::DrawBorderSettings::Default,
+      // The desired color format for the captured frame.
+      windows_capture::settings::ColorFormat::Rgba8,
+      // Additional flags for the capture settings that will be passed to user defined `new` function.
+      &FRAME,
+    )
+    .unwrap();
+    let recording_context = capture::RecordingContext::custom_start(settings, queue_controller)
+      .map_err(|e| {
+        eprintln!("{e:?}");
+        Error::MessageSender
+      })?;
+    dbg!("created capture");
 
     let webview = Self::init_webview(
       parent,
@@ -250,9 +286,10 @@ impl InnerWebView {
 
   #[inline]
   pub fn offscreen_data(&self) -> Option<(u32, Box<[u8]>)> {
-    use win_screenshot::prelude::*;
-    let buf = capture_window(self.hwnd.0);
-    buf.ok().map(|b| (b.width, b.pixels.into()))
+    let mut lock = FRAME.lock().ok()?;
+    let frame = lock.take()?;
+    //dbg!(&frame.data[0..4]);
+    Some((frame.data.len() as u32 / frame.width, frame.data))
   }
 
   #[inline]
