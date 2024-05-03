@@ -11,8 +11,8 @@ use tao::{
 use wry::{Rect, WebViewBuilder};
 
 fn main() -> wry::Result<()> {
-  //let event_loop = EventLoop::new();
-  //let window = WindowBuilder::new().build(&event_loop).unwrap();
+  let event_loop = EventLoop::new();
+  let window = WindowBuilder::new().build(&event_loop).unwrap();
 
   #[cfg(any(
     target_os = "windows",
@@ -21,7 +21,7 @@ fn main() -> wry::Result<()> {
     target_os = "android"
   ))]
   //let builder = WebViewBuilder::new(&window);
-  let builder = WebViewBuilder::new_offscreen();
+  let builder = WebViewBuilder::new(&window);
 
   #[cfg(not(any(
     target_os = "windows",
@@ -39,12 +39,12 @@ fn main() -> wry::Result<()> {
   let webview = builder
     .with_bounds(Rect {
       position: LogicalPosition::new(0, 0).into(),
-      size: LogicalSize::new(40, 20).into(),
+      size: LogicalSize::new(4, 2).into(),
     })
-    .with_transparent(true)
+    //.with_transparent(true)
     .with_html(
       r#"<html>
-        <body style="background-color:rgba(0,255,0,0.9);"></body>
+        <body style="background-color:rgba(100,249,0,0.5);"></body>
       </html>"#,
     )
     .build()?;

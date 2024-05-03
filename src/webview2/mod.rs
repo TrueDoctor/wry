@@ -234,6 +234,20 @@ impl InnerWebView {
     let mut m_web_view_visual = m_compositor.CreateContainerVisual()?;
     m_root_visual.Children()?.InsertAtTop(&m_web_view_visual)?;
     m_web_view_visual.SetRelativeSizeAdjustment(Vector2 { X: 1.0, Y: 1.0 })?;
+
+    let webview = Self::init_webview(
+      parent,
+      hwnd,
+      size,
+      attributes,
+      &env,
+      &controller,
+      pl_attrs,
+      is_child,
+    )?;
+    dbg!("created webview");
+
+    let drag_drop_controller = drop_handler.map(|handler| DragDropController::new(hwnd, handler));
     unsafe {
       composition_controller.SetRootVisualTarget(Some(&IUnknown::from(m_web_view_visual)))
     }?;
@@ -259,19 +273,6 @@ impl InnerWebView {
         Error::MessageSender
       })?;
     dbg!("created capture");
-
-    let webview = Self::init_webview(
-      parent,
-      hwnd,
-      size,
-      attributes,
-      &env,
-      &controller,
-      pl_attrs,
-      is_child,
-    )?;
-
-    let drag_drop_controller = drop_handler.map(|handler| DragDropController::new(hwnd, handler));
 
     Ok(Self {
       parent: RefCell::new(parent),
